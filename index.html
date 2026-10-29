@@ -2,13 +2,13 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Supermarkt Spiegel Builder</title>
-  <link rel="manifest" href="manifest.json">
   <style>
     * {
       box-sizing: border-box;
       font-family: Arial, sans-serif;
+      touch-action: manipulation;
     }
 
     body {
@@ -90,16 +90,14 @@
     }
 
     .tile {
-      padding: 10px;
+      padding: 12px;
       margin-bottom: 10px;
       color: white;
       font-weight: bold;
       border-radius: 4px;
       cursor: grab;
       user-select: none;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      touch-action: none; /* Maak touch-slepen mogelijk */
     }
 
     .tile-cola { background-color: #e63946; }
@@ -146,19 +144,39 @@
       left: 5px;
       font-size: 10px;
       color: #555;
+      pointer-events: none;
     }
 
     .placed-tile {
       height: 60px;
       color: white;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: bold;
       display: flex;
       align-items: center;
       justify-content: center;
       border-radius: 2px;
-      cursor: pointer;
-      position: relative;
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      text-align: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    /* Boodschap bij slepen */
+    .dragging-ghost {
+      position: fixed;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.85;
+      transform: translate(-50%, -50%);
+      border-radius: 4px;
+      color: white;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
     }
   </style>
 </head>
@@ -188,16 +206,20 @@
     <!-- Beschikbare Producten -->
     <div class="inventory">
       <h2>Producten</h2>
-      <p style="font-size: 12px; color: #666;">Sleep een product naar een plank:</p>
+      <p style="font-size: 11px; color: #666;">
+        • Sleep een product naar de stellage<br>
+        • Sleep een geplaatst product om te verplaatsen<br>
+        • Dubbelklik om te verwijderen
+      </p>
       
-      <div class="tile tile-cola" draggable="true" data-name="Cola 1L" data-width="15" data-color="#e63946">
-        Cola 1L (15 cm)
+      <div class="tile tile-cola" data-name="Cola 1L" data-width="15" data-color="#e63946">
+        Cola 1L (15cm)
       </div>
-      <div class="tile tile-chips" draggable="true" data-name="Chips Paprika" data-width="25" data-color="#f4a261">
-        Chips (25 cm)
+      <div class="tile tile-chips" data-name="Chips Paprika" data-width="25" data-color="#f4a261">
+        Chips (25cm)
       </div>
-      <div class="tile tile-melk" draggable="true" data-name="Verse Melk" data-width="10" data-color="#457b9d">
-        Melk (10 cm)
+      <div class="tile tile-melk" data-name="Verse Melk" data-width="10" data-color="#457b9d">
+        Melk (10cm)
       </div>
     </div>
 
@@ -211,9 +233,11 @@
 
 <script>
   let scaleFactor = 3; // 1 cm = 3 pixels
+  let activeDragItem = null;
+  let dragGhost = null;
 
   function buildRack() {
-    const widthCm = parseInt(document.getElementById('rack-width').value) || 100;
+    const widthCm = parseInt(document.getElementById('rack-width').value) || 120;
     const heightCm = parseInt(document.getElementById('rack-height').value) || 200;
     const shelfCount = parseInt(document.getElementById('shelf-count').value) || 4;
 
@@ -222,7 +246,6 @@
     rackEl.style.height = (heightCm * scaleFactor) + 'px';
     rackEl.innerHTML = '';
 
-    // Maak schappen aan
     for (let i = 1; i <= shelfCount; i++) {
       const shelf = document.createElement('div');
       shelf.className = 'shelf';
@@ -233,51 +256,112 @@
       label.innerText = 'Plank ' + i;
       shelf.appendChild(label);
 
-      // Drag & Drop events op het schap
-      shelf.addEventListener('dragover', (e) => e.preventDefault());
-      shelf.addEventListener('drop', handleDrop);
-
       rackEl.appendChild(shelf);
     }
   }
 
-  // Sleep-functionaliteit
-  let draggedProduct = null;
+  // Universele Drag-and-Drop Handler (Muis & Touch)
+  function initDragAndDrop() {
+    // Starten met slepen
+    document.addEventListener('pointerdown', (e) => {
+      const target = e.target.closest('.tile, .placed-tile');
+      if (!target) return;
 
-  document.querySelectorAll('.inventory .tile').forEach(tile => {
-    tile.addEventListener('dragstart', (e) => {
-      draggedProduct = {
-        name: e.target.dataset.name,
-        width: parseInt(e.target.dataset.width),
-        color: e.target.dataset.color
+      e.preventDefault();
+
+      // Data verzamelen van de tegel
+      activeDragItem = {
+        element: target,
+        isPlaced: target.classList.contains('placed-tile'),
+        name: target.dataset.name,
+        width: parseInt(target.dataset.width),
+        color: target.dataset.color
       };
+
+      // Visuele 'Ghost' tegel maken voor het slepen
+      dragGhost = document.createElement('div');
+      dragGhost.className = 'dragging-ghost';
+      dragGhost.style.width = (activeDragItem.width * scaleFactor) + 'px';
+      dragGhost.style.height = '60px';
+      dragGhost.style.backgroundColor = activeDragItem.color;
+      dragGhost.innerText = activeDragItem.name;
+      document.body.appendChild(dragGhost);
+
+      moveGhost(e.clientX, e.clientY);
+
+      // Als het een bestaande geplaatste tegel is, verbergen we hem tijdelijk tijdens het slepen
+      if (activeDragItem.isPlaced) {
+        target.style.opacity = '0.3';
+      }
     });
-  });
 
-  function handleDrop(e) {
-    e.preventDefault();
-    if (!draggedProduct) return;
+    // Tijdens het slepen
+    document.addEventListener('pointermove', (e) => {
+      if (!activeDragItem || !dragGhost) return;
+      moveGhost(e.clientX, e.clientY);
+    });
 
-    const shelf = e.currentTarget;
-    
-    // Maak geplaatst product aan
+    // Loslaten van het element
+    document.addEventListener('pointerup', (e) => {
+      if (!activeDragItem || !dragGhost) return;
+
+      // Zoek het element onder de muis/vinger
+      dragGhost.style.display = 'none'; // Eventjes verbergen voor elementFromPoint
+      const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+      dragGhost.style.display = 'flex';
+
+      const shelf = dropTarget ? dropTarget.closest('.shelf') : null;
+
+      if (shelf) {
+        // Als het een nieuw of verplaatst product is, voeg toe aan het gekozen schap
+        if (activeDragItem.isPlaced) {
+          shelf.appendChild(activeDragItem.element);
+          activeDragItem.element.style.opacity = '1';
+        } else {
+          createPlacedTile(shelf, activeDragItem);
+        }
+      } else {
+        // Indien niet op een plank losgelaten en het was een geplaatst item -> herstellen of verwijderen
+        if (activeDragItem.isPlaced) {
+          activeDragItem.element.style.opacity = '1';
+        }
+      }
+
+      // Opruimen
+      dragGhost.remove();
+      dragGhost = null;
+      activeDragItem = null;
+    });
+  }
+
+  function moveGhost(x, y) {
+    if (dragGhost) {
+      dragGhost.style.left = x + 'px';
+      dragGhost.style.top = y + 'px';
+    }
+  }
+
+  function createPlacedTile(shelf, itemData) {
     const item = document.createElement('div');
     item.className = 'placed-tile';
-    item.style.width = (draggedProduct.width * scaleFactor) + 'px';
-    item.style.backgroundColor = draggedProduct.color;
-    item.innerText = draggedProduct.name;
-    item.title = 'Klik om te verwijderen';
+    item.dataset.name = itemData.name;
+    item.dataset.width = itemData.width;
+    item.dataset.color = itemData.color;
+    item.style.width = (itemData.width * scaleFactor) + 'px';
+    item.style.backgroundColor = itemData.color;
+    item.innerText = itemData.name;
 
-    // Klikken op product om het weer te verwijderen uit de stellage
-    item.addEventListener('click', () => {
+    // Dubbelklik/dubbeltik om te verwijderen
+    item.addEventListener('dblclick', () => {
       item.remove();
     });
 
     shelf.appendChild(item);
   }
 
-  // Initialiseer direct een stellage bij het laden van de pagina
+  // Initialiseren bij het laden
   buildRack();
+  initDragAndDrop();
 </script>
 
 </body>
