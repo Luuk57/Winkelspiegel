@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supermarkt Spiegel Builder</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 15px;
+      background-color: #f4f6f8;
+      color: #333;
+    }
+
+    h1, h2 {
+      margin-top: 0;
+    }
+
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Instellingenpaneel */
+    .controls {
+      background: #fff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      align-items: center;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .control-group label {
+      font-size: 12px;
+      font-weight: bold;
+      color: #666;
+    }
+
+    .control-group input {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 100px;
+    }
+
+    button {
+      padding: 10px 15px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    /* Editor Layout */
+    .workspace {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    /* Productenvoorraad (Tegels) */
+    .inventory {
+      width: 250px;
+      background: #fff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .tile {
+      padding: 10px;
+      margin-bottom: 10px;
+      color: white;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: grab;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .tile-cola { background-color: #e63946; }
+    .tile-chips { background-color: #f4a261; }
+    .tile-melk { background-color: #457b9d; }
+
+    /* Stellage Visualisatie */
+    .rack-container {
+      flex: 1;
+      min-width: 300px;
+      background: #fff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      overflow-x: auto;
+    }
+
+    .rack {
+      border: 4px solid #4a4a4a;
+      background-color: #e0e0e0;
+      position: relative;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 10px;
+      box-sizing: content-box;
+    }
+
+    .shelf {
+      background-color: #b0bec5;
+      border-bottom: 6px solid #78909c;
+      min-height: 80px;
+      display: flex;
+      align-items: flex-end;
+      padding: 5px;
+      gap: 5px;
+      position: relative;
+    }
+
+    .shelf-label {
+      position: absolute;
+      top: 2px;
+      left: 5px;
+      font-size: 10px;
+      color: #555;
+    }
+
+    .placed-tile {
+      height: 60px;
+      color: white;
+      font-size: 12px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+
+<div class="app-container">
+  <h1>Supermarkt Spiegel Planner</h1>
+
+  <!-- Instellingen voor Stellage -->
+  <div class="controls">
+    <div class="control-group">
+      <label for="rack-width">Breedte (cm)</label>
+      <input type="number" id="rack-width" value="120">
+    </div>
+    <div class="control-group">
+      <label for="rack-height">Hoogte (cm)</label>
+      <input type="number" id="rack-height" value="200">
+    </div>
+    <div class="control-group">
+      <label for="shelf-count">Aantal Planken</label>
+      <input type="number" id="shelf-count" value="4">
+    </div>
+    <button onclick="buildRack()">Stellage Genereren</button>
+  </div>
+
+  <div class="workspace">
+    <!-- Beschikbare Producten -->
+    <div class="inventory">
+      <h2>Producten</h2>
+      <p style="font-size: 12px; color: #666;">Sleep een product naar een plank:</p>
+      
+      <div class="tile tile-cola" draggable="true" data-name="Cola 1L" data-width="15" data-color="#e63946">
+        Cola 1L (15 cm)
+      </div>
+      <div class="tile tile-chips" draggable="true" data-name="Chips Paprika" data-width="25" data-color="#f4a261">
+        Chips (25 cm)
+      </div>
+      <div class="tile tile-melk" draggable="true" data-name="Verse Melk" data-width="10" data-color="#457b9d">
+        Melk (10 cm)
+      </div>
+    </div>
+
+    <!-- Het Virtuele Schap -->
+    <div class="rack-container">
+      <h2>Stellage Overzicht</h2>
+      <div id="rack" class="rack"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let scaleFactor = 3; // 1 cm = 3 pixels
+
+  function buildRack() {
+    const widthCm = parseInt(document.getElementById('rack-width').value) || 100;
+    const heightCm = parseInt(document.getElementById('rack-height').value) || 200;
+    const shelfCount = parseInt(document.getElementById('shelf-count').value) || 4;
+
+    const rackEl = document.getElementById('rack');
+    rackEl.style.width = (widthCm * scaleFactor) + 'px';
+    rackEl.style.height = (heightCm * scaleFactor) + 'px';
+    rackEl.innerHTML = '';
+
+    // Maak schappen aan
+    for (let i = 1; i <= shelfCount; i++) {
+      const shelf = document.createElement('div');
+      shelf.className = 'shelf';
+      shelf.dataset.shelfId = i;
+
+      const label = document.createElement('span');
+      label.className = 'shelf-label';
+      label.innerText = 'Plank ' + i;
+      shelf.appendChild(label);
+
+      // Drag & Drop events op het schap
+      shelf.addEventListener('dragover', (e) => e.preventDefault());
+      shelf.addEventListener('drop', handleDrop);
+
+      rackEl.appendChild(shelf);
+    }
+  }
+
+  // Sleep-functionaliteit
+  let draggedProduct = null;
+
+  document.querySelectorAll('.inventory .tile').forEach(tile => {
+    tile.addEventListener('dragstart', (e) => {
+      draggedProduct = {
+        name: e.target.dataset.name,
+        width: parseInt(e.target.dataset.width),
+        color: e.target.dataset.color
+      };
+    });
+  });
+
+  function handleDrop(e) {
+    e.preventDefault();
+    if (!draggedProduct) return;
+
+    const shelf = e.currentTarget;
+    
+    // Maak geplaatst product aan
+    const item = document.createElement('div');
+    item.className = 'placed-tile';
+    item.style.width = (draggedProduct.width * scaleFactor) + 'px';
+    item.style.backgroundColor = draggedProduct.color;
+    item.innerText = draggedProduct.name;
+    item.title = 'Klik om te verwijderen';
+
+    // Klikken op product om het weer te verwijderen uit de stellage
+    item.addEventListener('click', () => {
+      item.remove();
+    });
+
+    shelf.appendChild(item);
+  }
+
+  // Initialiseer direct een stellage bij het laden van de pagina
+  buildRack();
+</script>
+
+</body>
+</html>
